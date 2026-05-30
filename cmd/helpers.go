@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 )
 
 type envelope map[string]any
@@ -29,4 +30,18 @@ func writeJson(w http.ResponseWriter, data envelope, headers http.Header, status
 	w.WriteHeader(status)
 	w.Write(js)
 	return nil
+}
+
+func GetBanDuration(bancount int) time.Duration {
+	switch {
+	case bancount <= 3:
+		return time.Minute
+	case bancount <= 6:
+		return 5 * time.Minute
+	case bancount <= 10:
+		return time.Hour
+	default:
+		return time.Hour * 24
+	}
+
 }

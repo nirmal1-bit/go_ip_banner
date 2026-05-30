@@ -19,10 +19,16 @@ func rateLimitAndIpBan(next http.HandlerFunc) http.HandlerFunc {
 		lastSeen time.Time
 	}
 
+	type bannedClient struct {
+		lastseen    time.Time
+		bancount    int //we can use to increase the ban time for repeated hackers or ddos attacker
+		banDuration time.Duration
+	}
+
 	var mu sync.Mutex
 
 	clients := make(map[string]*client)
-	bannedClients := make(map[string]*client)
+	bannedClients := make(map[string]*bannedClient)
 
 	go func() {
 
@@ -41,9 +47,9 @@ func rateLimitAndIpBan(next http.HandlerFunc) http.HandlerFunc {
 
 			}
 
-			for ip, client := range bannedClients {
-				if time.Since(client.lastSeen) > time.Minute*1440 {
-					delete(clients, ip)
+			for ip, bannedclient := range bannedClients {
+				if time.Since(bannedclient.lastseen) > time.Minute*1440 {
+					delete(bannedClients, ip)
 
 				}
 
@@ -63,7 +69,7 @@ func rateLimitAndIpBan(next http.HandlerFunc) http.HandlerFunc {
 		ip, port, err := net.SplitHostPort(r.RemoteAddr)
 
 		if err != nil {
-			log.Fatal("Some error", err)
+			log.Fatal("invalid remote error ", err)
 			return
 		}
 
@@ -87,11 +93,20 @@ func rateLimitAndIpBan(next http.HandlerFunc) http.HandlerFunc {
 		clients[ip].lastSeen = time.Now()
 
 		if !clients[ip].limiter.Allow() {
-			bannedClients[ip] = &client{
-				limiter:  rate.NewLimiter(2, 6),
-				lastSeen: time.Now(),
+			var bancount int
+			if existingBan, found := bannedClients[ip]; found {
+				bancount = existingBan.bancount + 1
+			} else {
+				bancount = 1
 			}
-			msg := fmt.Sprintf(" too many request your ip has been banned for 1 day for suspicious activity your public ip address is %s and empheral port is %s", ip, port)
+
+			bannedClients[ip] = &bannedClient{
+				lastseen:    time.Now(),
+				bancount:    bancount,
+				banDuration: GetBanDuration(bancount),
+			}
+			fmt.Printf(" too many request your ip has been banned for %v for suspicious activity your public ip address is %s and empheral port is %s", bannedClients[ip].banDuration, ip, port)
+			msg := fmt.Sprintf(" too many request your ip has been banned for %v for suspicious activity your public ip address is %s and empheral port is %s", bannedClients[ip].banDuration, ip, port)
 			writeJson(w, envelope{"message": msg}, nil, http.StatusBadRequest)
 			mu.Unlock()
 			return
